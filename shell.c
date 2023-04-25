@@ -178,14 +178,19 @@ bool parseOptions(List *lp){
     optionsList[i] = NULL;
     opListSize = i + 1;
 
+    //pipe logic 
     if (strcmp(currOp, "|") == 0 || containsPipes){
         containsPipes = true;
         numPipes++;
+
+        //add to LL 
         enqueue(optionsList, opListSize);
     }
     currOp = "";
 
-    // exiting the shell if the command to be executed is "exit"
+    //built-ins logic 
+
+    //to exit shell
     if (strcmp(optionsList[0], "exit") == 0){
         if (!executeNextCommand()){
             free(optionsList);
@@ -195,7 +200,7 @@ bool parseOptions(List *lp){
         free(optionsList);
     
 
-    // print the most recent exit code if the command executed is "status"
+    // print most recent status 
     }else if (strcmp(optionsList[0], "status") == 0){
 
         if (!executeNextCommand() || (last == 127)){
@@ -206,7 +211,7 @@ bool parseOptions(List *lp){
         free(optionsList);
 
 
-
+    //check input for directory given for cd 
     }else if (strcmp(optionsList[0], "cd") == 0){
 
         if (executeNextCommand() == 0){
@@ -293,6 +298,58 @@ bool parseFileName(List *lp){
     return true;
 }
 
+
+bool checkRedirections(List *lp){
+    
+    if (acceptToken(lp, "<")){
+            fflush(stdout);
+            lastOp = "<";
+
+
+            if (parseFileName(lp)){
+                isInput= true;
+            }else{
+                freePipes();
+                return false;
+            }
+
+            if (acceptToken(lp, ">")){
+                lastOp = ">";
+
+
+                if (parseFileName(lp)){
+                    isOutput = true;
+                }else {
+                    freePipes();
+                    return false;
+                }
+            }
+        }
+        else if (acceptToken(lp, ">")){
+            lastOp = ">";
+
+            if (parseFileName(lp)){
+                isOutput= true;
+            }else {
+                freePipes();
+                return false;
+            }
+        
+            if (acceptToken(lp, "<")){
+                //lastOp = "<";
+                
+                if (parseFileName(lp)){
+                    lastOp= "<";
+                    isInput = true;
+                }else{
+                    freePipes();
+                    return false;
+                }
+            }
+        }
+    return true;
+}
+
 /**
  * The function parseRedirections parses redirections according to the grammar:
  *
@@ -306,50 +363,7 @@ bool parseRedirections(List *lp){
 
     if (containsPipes){
 
-        if (acceptToken(lp, "<")){
-            fflush(stdout);
-            lastOp = "<";
-            if (!parseFileName(lp)){
-                freePipes();
-                return false;
-            }
-            isInput = true;
-            if (acceptToken(lp, ">")){
-                lastOp = ">";
-                if (parseFileName(lp))
-                {
-                    isOutput = true;
-                }
-                else
-                {
-                    freePipes();
-                    return false;
-                }
-            }
-        }
-        else if (acceptToken(lp, ">"))
-        {
-            lastOp = ">";
-            if (!parseFileName(lp))
-            {
-                freePipes();
-                return false;
-            }
-            isOutput = true;
-            if (acceptToken(lp, "<"))
-            {
-                lastOp = "<";
-                if (parseFileName(lp))
-                {
-                    isInput = true;
-                }
-                else
-                {
-                    freePipes();
-                    return false;
-                }
-            }
-        }
+       checkRedirections(lp);
 
         int pipefd[2];  //fd[0] for input (read end), fd[1] for output (write end)
         pid_t pid;
@@ -368,30 +382,36 @@ bool parseRedirections(List *lp){
 
             if (pid == 0){ // Child process{
                 if (isInput){
-                    openIn = open(inpF, O_RDONLY);
-                    if (openIn == -1)
-                    {
-                        printf("Error in open\n");
+                    openIn = open(inpF, O_RDONLY);  //pgm using input file's data so read only 
+
+                    if(openIn == 0){
+                        close(0);       // deallocates input fd 
+                        dup(openIn);
+                        close(openIn);
+                        //isInput= false;
+
+                    } else if (openIn == -1){
+                        printf("Error opening input file\n");
                         return false;
                     }
-                    close(0);   // deallocates input fd 
-                    dup(openIn);
-                    close(openIn);
-                    isInput = false;
                 }
                 
                 if (isOutput){
-                    openOut = creat(outF, 0644);
-                    if (openOut == -1){
-                        printf("Error in open\n");
+                    openOut = open(outF, O_CREAT| O_TRUNC| O_WRONLY, 0644); // create file if it doesn't exits, truncate if it does
+                    
+                    if(openOut == 0){
+                        close(1);       //deallocates output fd
+                        dup(openOut);
+                        close(openOut);
+                        //isOutput= false;
+
+                    }else if (openOut == -1){
+                        printf("Error opening output file\n");
                         return false;
                     }
-
-                    close(1);   //deallocates output fd 
-                    dup(openOut);
-                    close(openOut);
-                    isOutput = false;
                 }
+
+
                 // Redirect stdin to read end of previous pipe
                 if (i != 0){
                     dup2(prev_read, STDIN_FILENO);
@@ -496,107 +516,66 @@ bool parseRedirections(List *lp){
     isInput = false;
     isOutput = false;
 
-    if (acceptToken(lp, "<"))
-    {
-        fflush(stdout);
-
-        lastOp = "<";
-        if (!parseFileName(lp))
-        {
-            free(optionsList);
-            return false;
-        }
-        isInput = true;
-        if (acceptToken(lp, ">"))
-        {
-            lastOp = ">";
-            if (parseFileName(lp))
-            {
-                isOutput = true;
-            }
-            else
-            {
-                free(optionsList);
-                return false;
-            }
-        }
-    }
-    else if (acceptToken(lp, ">"))
-    {
-        lastOp = ">";
-        if (!parseFileName(lp))
-        {
-            free(optionsList);
-            return false;
-        }
-        isOutput = true;
-        if (acceptToken(lp, "<"))
-        {
-            lastOp = "<";
-            if (parseFileName(lp))
-            {
-                isInput = true;
-            }
-            else
-            {
-                free(optionsList);
-                return false;
-            }
-        }
-    }
+    checkRedirections(lp); 
 
     pid_t pid = fork();
-    if (pid == 0)
-    {
-
-        if (isInput && isOutput && (strcmp(inpF, outF) == 0))
-        {
+    if (pid == 0){
+        
+        //check if input and output files are the same 
+        if (isInput && isOutput && (strcmp(inpF, outF) == 0)){
             printf("Error: input and output files cannot be equal!\n");
             _exit(2);
         }
-        if (isInput)
-        {
-            int fd_in = open(inpF, O_RDONLY);
-            if (fd_in == -1)
-            {
+        
+        if (isInput){
+            int openIn = open(inpF, O_RDONLY); // pgm taking input from file so read only 
+            
+            if (openIn < 0){
                 printf("Error in open\n");
                 return false;
-                // what do we do, we return false ?
+            
+            } else {
+                close(0);
+                dup(openIn);        //redirect input
+                close(openIn);
+        
             }
-            close(0);
-            dup(fd_in);
-            close(fd_in);
         }
-        if (isOutput)
-        {
-            int fd_out = creat(outF, 0644);
-            if (fd_out == -1)
-            {
+
+        if (isOutput){
+            int openOut = open(outF, O_CREAT| O_TRUNC| O_WRONLY, 0644); // create file if it doesn't exist, truncate if it does 
+            if (openOut < 0){
                 printf("Error in open\n");
                 return false;
-                // what do we do, we return false ?
-            }
 
-            close(1);
-            dup(fd_out);
-            close(fd_out);
+            }else{
+                close(1);
+                dup(openOut);   // redirect output
+                close(openOut);
+            }
         }
 
-        execvp(optionsList[0], optionsList);
-        printf("Error: command not found!\n");
-        _exit(127);
-    }
-    else
-    {
+        // child process running user command 
+        if(execvp(optionsList[0], optionsList) < 0){
+
+            //upon execvp failure 
+            printf("Error: command not found!\n");
+            last= 127;
+            _exit(127);
+        }
+
+
+    }else{
+
+        //wait for child processes to exit 
         int status;
         waitpid(pid, &status, 0);
         //last_command_status = 0;
 
-        if (WIFEXITED(status))
-        {
-            // save exit code of the child process
-            last = WEXITSTATUS(status);
-        }
+        //determine if child processes exit natrually
+        // if so, save child process' exit code
+        if (WIFEXITED(status)) last = WEXITSTATUS(status); 
+
     }
     free(optionsList);
     return true;
@@ -627,7 +606,6 @@ bool parseBuiltIn(List *lp){
             return true;
         }
     }
-
     return false;
 }
 
@@ -689,4 +667,3 @@ bool parseInputLine(List *lp){
     }
 
     return true;
-}
