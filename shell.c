@@ -10,75 +10,81 @@
 #include "scanner.h"
 #include "shell.h"
 
-
-// array to store commands
+// array to store command options
 char **optionsList;
 
-// int to store last status and special status 
-int last=0;
-int specialStatus= 0;   // 1 when last command exits w special status 
+// variable for the exit code of the last command executed
+int last = 0;
 
-//string that stores current and last operators being parsed
-char *lastOp= "";
-char *currOp= "";
+// variable to keep track of the last parsed operator
+char *lastOp = "";
+char *op = "";
+bool pipes = false;
+// variable that is 1 when the last command executed was the special command status
+int last_command_status = 0;
 
-//variables for piping 
-bool containsPipes= false;
-int numPipes= 0;
-
-//variables for pipes and redirections
-char *redirection= "";
-char *inpF= "";
-char *outF= "";
-bool isInput= false;
-bool isOutput= false;
+char *redirection_lastOp = "";
+char *inpF = "";
+char *outF = "";
+bool input = false;
+bool output = false;
+int numberPipes = 0;
 
 // structure to store pipes command and options
+
 struct Pipe
 {
-    char **cmds;
+    char **arguments;
     struct Pipe *next;
 };
 
-struct Pipe *head = NULL;
-struct Pipe *tail = NULL;
+struct Pipe *front = NULL;
+struct Pipe *rear = NULL;
 
-// function to enqueue piping data into struct 
-void enqueue(char *args[], int size){
-    struct Pipe *newNode = malloc(sizeof(struct Pipe));
-    newNode->cmds = (char **)malloc(size * sizeof(char *));
+void enqueue(char *op[], int size)
+{
 
-    for (int i = 0; i < size; i++){
-        (newNode->cmds)[i] = args[i];
+    struct Pipe *nptr = malloc(sizeof(struct Pipe));
+    nptr->arguments = (char **)malloc(size * sizeof(char *));
+
+    for (int i = 0; i < size; i++)
+    {
+        (nptr->arguments)[i] = op[i];
     }
 
-    newNode->next = NULL;
-
-    //if LL is empty, initialize with newNode at head
-    if (head == NULL){
-        head = newNode;
-
-    // else add node to end of LL
-    }else{
-        tail->next = tail;
-        tail = newNode;
+    nptr->next = NULL;
+    if (front == NULL)
+    {
+        // queue is empty, set front and rear to new element
+        front = nptr;
+        rear = nptr;
+    }
+    else
+    {
+        // add new element to end of queue
+        rear->next = nptr;
+        rear = nptr;
     }
 }
 
-// function to free memory allocated when piping 
-void freePipes(){
-    struct Pipe *current = head;
+void freePipes()
+{
+    // printf("trying to free pipes :(\n");
+    struct Pipe *current = front;
 
-    while (current != NULL){
-
+    while (current != NULL)
+    {
+        // free the memory allocated for the arguments array
+        // free the memory allocated for the next pointer
         struct Pipe *next = current->next;
-        free(current->cmds);
+        free(current->arguments);
         free(current);
         current = next;
     }
-    head = NULL;
-    tail = NULL;
+    front = NULL;
+    rear = NULL;
 }
+
 
 /**
  * The function acceptToken checks whether the current token matches a target identifier,
@@ -87,24 +93,33 @@ void freePipes(){
  * @param ident target identifier
  * @return a bool denoting whether the current token matches the target identifier.
  */
-bool acceptToken(List *lp, char *ident){
-    if (*lp != NULL && strcmp(((*lp)->t), ident) == 0){
+bool acceptToken(List *lp, char *ident)
+{
+
+    if (*lp != NULL && strcmp(((*lp)->t), ident) == 0)
+    {
         *lp = (*lp)->next;
         return true;
     }
     return false;
 }
 
-//function returns wether or not next command should be executed based on the grammar
-bool executeNextCommand(){
-
-    if ((strcmp(lastOp, "&") == 0) && (last != 0)){
+/**
+ * The fuunction returnSignal returns 1 if the last parsed command must not be executed.
+ * It returns 0 if the command must be executed
+ */
+int returnSignal()
+{
+    if ((strcmp(lastOp, "&&") == 0) && (last != 0))
+    {
         return 1;
-
-    }else if ((strcmp(lastOp, "||") == 0) && (last == 0)){
+    }
+    else if ((strcmp(lastOp, "||") == 0) && (last == 0))
+    {
         return 1;
-
-    }else{
+    }
+    else
+    {
         return 0;
     }
 }
@@ -114,13 +129,21 @@ bool executeNextCommand(){
  * @param lp List pointer to the start of the tokenlist.
  * @return a bool denoting whether the executable was parsed successfully.
  */
-bool parseExecutable(List *lp){
+bool parseExecutable(List *lp)
+{
 
-    //dynamically allocate memory for optionsList (stores command options)
+    // TODO: Determine whether to accept parsing an executable here.
+    //
+    // It is not recommended to check for existence of the executable already
+    // here, since then it'll be hard to continue parsing the rest of the input
+    // line (command execution should continue after a "not found" command),
+    // it'll also be harder to print the correct error message.
+    //
+    // Instead, we recommend to just do a syntactical check here, which makes
+    // more sense, and defer the binary existence check to the runtime part
+    // you'll write later.
     optionsList = (char **)malloc(2 * sizeof(char *));
     optionsList[0] = (*lp)->t;
-
-    //increment pointer 
     (*lp) = (*lp)->next;
 
     return true;
@@ -131,7 +154,8 @@ bool parseExecutable(List *lp){
  * @param s input string.
  * @return a bool denoting whether the current string is an operator.
  */
-bool isOperator(char *s){
+bool isOperator(char *s)
+{
     // NULL-terminated array makes it easy to expand this array later
     // without changing the code at other places.
     char *operators[] = {
@@ -144,9 +168,12 @@ bool isOperator(char *s){
         "|",
         NULL};
 
-    for (int i = 0; operators[i] != NULL; i++){
-        if (strcmp(s, operators[i]) == 0){
-            currOp = operators[i];  // store current operator 
+    for (int i = 0; operators[i] != NULL; i++)
+    {
+        if (strcmp(s, operators[i]) == 0)
+        {
+            op = operators[i];
+
             return true;
         }
     }
@@ -158,35 +185,41 @@ bool isOperator(char *s){
  * @param lp List pointer to the start of the tokenlist.
  * @return a bool denoting whether the options were parsed successfully.
  */
-bool parseOptions(List *lp){
+bool parseOptions(List *lp)
+{
 
-    //store each (*lp)->t as an option, if any exist
+    // TODO: store each (*lp)->t as an option, if any exist
     int i = 1;
-    int opListSize = 2;     //current options list size 
 
-    // iterate through tokenlist and storing each option in array
-    while (*lp != NULL && !isOperator((*lp)->t)){
-
-         // reallocate memory to expand optionsList if needed
-        if (i >= opListSize - 1){
-            optionsList = realloc(optionsList, 2 * opListSize * sizeof(char *));
-            opListSize = 2 * opListSize;
+    // storing each option in the array starting from postion 1
+    int size_options = 2;
+    while (*lp != NULL && !isOperator((*lp)->t))
+    {
+        if (i >= size_options - 1)
+        {
+            optionsList = realloc(optionsList, 2 * size_options * sizeof(char *));
+            size_options = 2 * size_options;
         }
-
-        //storing each (*lp)-> as an option
         optionsList[i] = (*lp)->t;
         (*lp) = (*lp)->next;
         i++;
     }
-
-    //once each option is stored, set its index to NULL and increment the opListSize
     optionsList[i] = NULL;
-    opListSize = i + 1;
+    size_options = i + 1;
 
+    if (strcmp(op, "|") == 0 || pipes)
+    {
+        pipes = true;
+        numberPipes++;
+        enqueue(optionsList, size_options);
+    }
+    op = "";
 
     // exiting the shell if the command to be executed is "exit"
-    if (strcmp(optionsList[0], "exit") == 0){
-        if (!executeNextCommand()){
+    if (strcmp(optionsList[0], "exit") == 0)
+    {
+        if (!returnSignal())
+        {
             free(optionsList);
             _exit(0);
         }
@@ -195,49 +228,52 @@ bool parseOptions(List *lp){
     }
 
     // print the most recent exit code if the command executed is "status"
-    else if (strcmp(optionsList[0], "status") == 0){
+    else if (strcmp(optionsList[0], "status") == 0)
+    {
 
-        if (!executeNextCommand() || (last == 127)){
-            //last_command_status = 1;
+        if (!returnSignal() || (last == 127))
+        {
+            last_command_status = 1;
             printf("The most recent exit code is: %d\n", last);
         }
         lastOp = "";
         free(optionsList);
+    }
 
+    else if (strcmp(optionsList[0], "cd") == 0)
+    {
 
-    //check input directory given for cd 
-    }else if (strcmp(optionsList[0], "cd") == 0){
-        if (executeNextCommand()){
-            if(optionsList[1] == NULL){
-                printf("Error: cd requires folder to navigate to!\n");
-                last= 2;        // exit 2 for cd errors 
+        char *gdir;
+        char *dir;
+        char *to;
+        char buf[100];
+        gdir = getcwd(buf, sizeof(buf));
+        dir = strcat(gdir, "/");
 
-            } else {
-            // check directory exists 
-                if(chdir(optionsList[1]) == -1){
-                    printf("Error: cd directory not found!\n");
-                    last= 2;
-                
-                }else{
-                last= 0;
-                }
+        if (optionsList[1] == NULL)
+        {
+            printf("Error: cd requires folder to navigate to!\n");
+            last = 2;
+        }
+        else
+        {
+
+            to = strcat(dir, optionsList[1]);
+            last = 0;
+            if (chdir(to) != 0)
+            {
+                printf("Error: cd directory not found!\n");
+                last = 2;
             }
         }
-        free(optionsList);
-        lastOp= "";
-    }
 
-    if (strcmp(currOp, "|") == 0 || containsPipes){
-        containsPipes = true;
-        numPipes++;
-        enqueue(optionsList, opListSize);
-    }
-    currOp = "";
-
-    if (containsPipes){
+        lastOp = "";
         free(optionsList);
     }
-
+    if (pipes)
+    {
+        free(optionsList);
+    }
     return true;
 }
 
@@ -266,11 +302,13 @@ bool parseCommand(List *lp)
 bool parsePipeline(List *lp)
 {
 
-    if (!parseCommand(lp)){
+    if (!parseCommand(lp))
+    {
         return false;
     }
 
-    if (acceptToken(lp, "|")){
+    if (acceptToken(lp, "|"))
+    {
         return parsePipeline(lp);
     }
 
@@ -282,24 +320,25 @@ bool parsePipeline(List *lp)
  * @param lp List pointer to the start of the tokenlist.
  * @return a bool denoting whether the filename was parsed successfully.
  */
-bool parseFileName(List *lp){
-    
-    if (isEmpty(*lp) || isOperator((*lp)->t)){
+bool parseFileName(List *lp)
+{
+    // TODO: Process the file name appropriately
+
+    if (isEmpty(*lp) || isOperator((*lp)->t))
+    {
         return false;
     }
 
-    // store pointer 
     char *fileName = (*lp)->t;
 
-    //assign file name to input/output file place holder
-
-    if (strcmp(redirection,"<") == 0){
+    if (redirection_lastOp == "<")
+    {
         inpF = fileName;
-
-    }else if (strcmp(redirection, ">") == 0){
-        outF= fileName;
     }
-
+    else if (redirection_lastOp == ">")
+    {
+        outF = fileName;
+    }
     *lp = (*lp)->next;
     return true;
 }
@@ -313,226 +352,203 @@ bool parseFileName(List *lp){
  * @param lp List pointer to the start of the tokenlist.
  * @return a bool denoting whether the redirections were parsed successfully.
  */
-bool parseRedirections(List *lp){
+bool parseRedirections(List *lp)
+{
 
-    // first handle piping 
-    if (containsPipes){
+    if (pipes)
+    {
 
-
-        if(acceptToken(lp, ">")){
-            lastOp= ">"; 
-
-            // check for valid input file 
-            if(parseFileName(lp)){
-                isInput= true;
-            } else {
-                freePipes();
-                return false;
-            }
-
-            // check for valid output file 
-            if(acceptToken(lp, "<")){
-                isOutput= true;
-            } else {
-                freePipes();
-                return false;
-            }
-
-
-        // repeat process for output redirection
-        } else if (acceptToken(lp, "<")){
+        if (acceptToken(lp, "<"))
+        {
             fflush(stdout);
-            lastOp = "<";
-
-            if (parseFileName(lp)){
-                isInput= true;
-            }else {
+            redirection_lastOp = "<";
+            if (!parseFileName(lp))
+            {
                 freePipes();
                 return false;
             }
-          
-
-            if (acceptToken(lp, ">")){
-                redirection = ">";
-                if (parseFileName(lp)){
-                    isOutput = true;
-                }else{
+            input = true;
+            if (acceptToken(lp, ">"))
+            {
+                redirection_lastOp = ">";
+                if (parseFileName(lp))
+                {
+                    output = true;
+                }
+                else
+                {
                     freePipes();
                     return false;
                 }
             }
-
         }
-    
-        //now execute commands with pipes 
+        else if (acceptToken(lp, ">"))
+        {
+            redirection_lastOp = ">";
+            if (!parseFileName(lp))
+            {
+                freePipes();
+                return false;
+            }
+            output = true;
+            if (acceptToken(lp, "<"))
+            {
+                redirection_lastOp = "<";
+                if (parseFileName(lp))
+                {
+                    input = true;
+                }
+                else
+                {
+                    freePipes();
+                    return false;
+                }
+            }
+        }
 
-        // current command node (starting at head of LL)
-        struct Pipe *curr = head;
-
-        int fileDescriptor[2];
+        int fd[2];
         pid_t pid;
-        int status, openInp, openOut;
-        int prevCmd = 0;
+        int status;
+        struct Pipe *curr = front;
 
-        for (int i = 0; i < numPipes; i++){
-            
-            
+        int prev_read = 0;
 
-            //parent process creates pipe 
-            pipe(fileDescriptor);
+        for (int i = 0; i < numberPipes; i++)
+        {
+            // Create a pipe for inter-process communication
+            pipe(fd);
 
-            // then parent forks a child process 
+            // Fork a child process
             pid = fork();
 
-            if(pid == -1){
-                printf("Error in the fork\n");
-                last= 1;
+            if (pid == 0) // Child process
+            {
+                if (input)
+                {
+                    int fd_in = open(inpF, O_RDONLY);
+                    if (fd_in == -1)
+                    {
+                        printf("Error in open\n");
+                        return false;
+                    }
+                    close(0);
+                    dup(fd_in);
+                    close(fd_in);
+                    input = false;
+                }
+                if (output)
+                {
+                    int fd_out = creat(outF, 0644);
+                    if (fd_out == -1)
+                    {
+                        printf("Error in open\n");
+                        return false;
+                    }
+
+                    close(1);
+                    dup(fd_out);
+                    close(fd_out);
+                    output = false;
+                }
+                // Redirect stdin to read end of previous pipe
+                if (i != 0)
+                {
+                    dup2(prev_read, STDIN_FILENO);
+                    close(prev_read);
+                }
+
+                // Redirect stdout to write end of current pipe
+                if (i != numberPipes - 1)
+                {
+                    dup2(fd[1], STDOUT_FILENO);
+                    close(fd[1]);
+                }
+
+                // Execute the command
+                execvp(curr->arguments[0], curr->arguments);
+
+                // If execvp returns, there was an error
+            }
+            else if (pid < 0) // Error
+            {
+                perror("fork");
                 exit(1);
-
-        
-            }else if (pid == 0){
-
-                //for valid input that exists 
-                if (isInput){
-
-                    openInp= open(inpF, O_RDONLY); //pgm using file's data as input, so read only
-                    
-                    //cmd success
-                    if (openInp == 0){
-                        close(0);
-                        dup(openInp);
-                        close(openInp);
-                        //isInput= false
-
-                    //cmd failure
-                    }else{
-                        printf("Error opening file\n");
-                        return false;
-                    }
-                }
-
-                // for valid output
-                if (isOutput){
-                    openOut = open(outF, O_CREAT| O_TRUNC| O_WRONLY, 0644); //create file if it doesn't exist, truncate if it does
-                    
-                    //cmd success
-                    if (openOut == 0){
-                        close(1);
-                        dup(openOut);
-                        close(openOut);
-                        //isOutput = false;
-
-                    // cmd failure
-                    } else {
-                        printf("Error opening file\n");
-                        return false;
-                    }
-                }
-
-
-                // redirecting stdin to read 
-                if (i != 0){
-                    dup2(prevCmd, STDIN_FILENO); //redirect stdin to file 
-                    close(prevCmd);    // reallocate pointer 
-                }
-
-                // redirecting stdout to write 
-                if (i != numPipes - 1){
-                    dup2(fileDescriptor[1], STDOUT_FILENO); //redirect stdout to file
-                    close(fileDescriptor[1]);
-                }
-
-
-                // execute command 
-                execvp(curr->cmds[0], curr->cmds);
-
             }
 
-            // increment curr to get to next pipe command 
+            // Parent process
             curr = curr->next;
-            close(fileDescriptor[1]);
-            prevCmd = fileDescriptor[0];
+            close(fd[1]);
+            prev_read = fd[0];
         }
 
-       
-        // wait for all child processes to finish
-        for (int i = 0; i < numPipes; i++){
+        // Wait for all child processes to complete
+
+        for (int i = 0; i < numberPipes; i++)
+        {
 
             waitpid(-1, &status, 0);
-           // last_command_status = 0;
+            last_command_status = 0;
 
-            //determine if child process ended normally 
-            if (WIFEXITED(status)){
-                last = WEXITSTATUS(status); // if so, set last to child process' exit 
+            if (WIFEXITED(status))
+            {
+                // save exit code of the child process
+
+                last = WEXITSTATUS(status);
             }
         }
 
         freePipes();
+
         return true;
     }
 
+    if (isEmpty(*lp) || ((strcmp((*lp)->t, "<") != 0) && (strcmp((*lp)->t, ">") != 0)))
+    {
 
-     //now handle commands w/o pipes
-
-    bool noRedirections= (strcmp((*lp)->t, ">") != 0) && (strcmp((*lp)->t, "<") != 0);
-
-    if (isEmpty(*lp) || noRedirections){
-
-        //check if command should be executed 
-        if (executeNextCommand()){
+        if (returnSignal() != 1)
+        {
 
             pid_t pid = fork();
 
-            if (pid < 0){
-              
-                printf("Error in fork");
-                last= 1; 
-                exit(1);
-
-
-            }else if (pid == 0){
+            if (pid == -1)
+            {
+                // Handle error.
+                printf("error in fork");
+            }
+            else if (pid == 0)
+            {
+                // We are in the child process.
 
                 fflush(stdout);
 
                 // check if the command should be executed
-                if (executeNextCommand()){
-
-                    //use execvp to execute command 
-                    if(execvp(optionsList[0], optionsList) < 0){
-                        
-                        //if execvp fails
-                        printf("Error: command not found!\n");
-                        last= 127;
-                        _exit(127);
-                    }
-                    
-                }else{
-                    // if command should not be executed 
+                if (returnSignal() == 1)
+                {
                     lastOp = "";
                     free(optionsList);
                     _exit(0);
                 }
+                else
+                {
+                    // Use execvp() to execute the command in the child process.
 
-            // waiting for child processes to finish         
-            }else{
-                
-                int status; 
-
-                if(wait(&status) < 0){
-                    last= 1;
-                    _exit(1);   //wait for child to terminate 
-                }else {
-                    last= 0;
+                    execvp(optionsList[0], optionsList);
+                    // If execvp() succeeds, this code will not be reached.
+                    printf("Error: command not found!\n");
+                    _exit(127);
                 }
+            }
+            else
+            {
+                // We are in the parent process.
+                // Use waitpid() to wait for the child process to complete.
 
-
+                int status;
                 waitpid(pid, &status, 0);
-                //last_command_status = 0;
+                last_command_status = 0;
 
-
-                //determine if child process ended naturally 
-
-                if (WIFEXITED(status)){
+                if (WIFEXITED(status))
+                {
                     // save exit code of the child process
 
                     last = WEXITSTATUS(status);
@@ -546,39 +562,52 @@ bool parseRedirections(List *lp){
         return true;
     }
 
-    isInput = false;
-    isOutput = false;
+    input = false;
+    output = false;
 
-    if (acceptToken(lp, "<")){
+    if (acceptToken(lp, "<"))
+    {
         fflush(stdout);
 
-        redirection = "<";
-        if (!parseFileName(lp)){
+        redirection_lastOp = "<";
+        if (!parseFileName(lp))
+        {
             free(optionsList);
             return false;
         }
-        isInput = true;
-        if (acceptToken(lp, ">")){
-            redirection = ">";
-            if (parseFileName(lp)){
-                isOutput = true;
-            }else{
+        input = true;
+        if (acceptToken(lp, ">"))
+        {
+            redirection_lastOp = ">";
+            if (parseFileName(lp))
+            {
+                output = true;
+            }
+            else
+            {
                 free(optionsList);
                 return false;
             }
         }
-    }else if (acceptToken(lp, ">")){
-        redirection = ">";
-        if (!parseFileName(lp)){
+    }
+    else if (acceptToken(lp, ">"))
+    {
+        redirection_lastOp = ">";
+        if (!parseFileName(lp))
+        {
             free(optionsList);
             return false;
         }
-        isOutput = true;
-        if (acceptToken(lp, "<")){
-            redirection = "<";
-            if (parseFileName(lp)){
-                isInput = true;
-            }else{
+        output = true;
+        if (acceptToken(lp, "<"))
+        {
+            redirection_lastOp = "<";
+            if (parseFileName(lp))
+            {
+                input = true;
+            }
+            else
+            {
                 free(optionsList);
                 return false;
             }
@@ -586,14 +615,16 @@ bool parseRedirections(List *lp){
     }
 
     pid_t pid = fork();
-    if (pid == 0){
+    if (pid == 0)
+    {
 
-        if (isInput && isOutput && (strcmp(inpF, outF) == 0)){
-            printf("Error: isInput and isOutput files cannot be equal!\n");
+        if (input && output && (strcmp(inpF, outF) == 0))
+        {
+            printf("Error: input and output files cannot be equal!\n");
             _exit(2);
         }
-
-        if (isInput){
+        if (input)
+        {
             int fd_in = open(inpF, O_RDONLY);
             if (fd_in == -1)
             {
@@ -604,9 +635,9 @@ bool parseRedirections(List *lp){
             close(0);
             dup(fd_in);
             close(fd_in);
-
-
-        }if (isOutput){
+        }
+        if (output)
+        {
             int fd_out = creat(outF, 0644);
             if (fd_out == -1)
             {
@@ -623,13 +654,15 @@ bool parseRedirections(List *lp){
         execvp(optionsList[0], optionsList);
         printf("Error: command not found!\n");
         _exit(127);
-
-    }else{
+    }
+    else
+    {
         int status;
         waitpid(pid, &status, 0);
-       // last_command_status = 0;
+        last_command_status = 0;
 
-        if (WIFEXITED(status)){
+        if (WIFEXITED(status))
+        {
             // save exit code of the child process
             last = WEXITSTATUS(status);
         }
@@ -643,7 +676,13 @@ bool parseRedirections(List *lp){
  * @param lp List pointer to the start of the tokenlist.
  * @return a bool denoting whether the builtin was parsed successfully.
  */
-bool parseBuiltIn(List *lp){
+bool parseBuiltIn(List *lp)
+{
+
+    //
+    // TODO: Implement the logic for these builtins, and extend with
+    // more builtins down the line
+    //
 
     // NULL-terminated array makes it easy to expand this array later
     // without changing the code at other places.
@@ -653,8 +692,10 @@ bool parseBuiltIn(List *lp){
         "cd",
         NULL};
 
-    for (int i = 0; builtIns[i] != NULL; i++){
-        if (acceptToken(lp, builtIns[i])){
+    for (int i = 0; builtIns[i] != NULL; i++)
+    {
+        if (acceptToken(lp, builtIns[i]))
+        {
             optionsList = (char **)malloc(2 * sizeof(char *));
             optionsList[0] = builtIns[i];
             return true;
@@ -679,7 +720,7 @@ bool parseChain(List *lp)
     if (parseBuiltIn(lp)){
         return parseOptions(lp);
     }
-
+    
     if (parsePipeline(lp)){
         return parseRedirections(lp);
     }
@@ -699,27 +740,36 @@ bool parseChain(List *lp)
  * @param lp List pointer to the start of the tokenlist.
  * @return a bool denoting whether the inputline was parsed successfully.
  */
-bool parseInputLine(List *lp){
+bool parseInputLine(List *lp)
+{
 
-    containsPipes = false;
-    numPipes = 0;
-    if (isEmpty(*lp)){
+    pipes = false;
+    numberPipes = 0;
+    if (isEmpty(*lp))
+    {
         return true;
     }
 
-    if (!parseChain(lp)){
+    if (!parseChain(lp))
+    {
         return false;
     }
 
-    if (acceptToken(lp, "&") || acceptToken(lp, "&&")){
+    if (acceptToken(lp, "&") || acceptToken(lp, "&&"))
+    {
         lastOp = "&&";
         return parseInputLine(lp);
-    }else if (acceptToken(lp, "||")){
+    }
+    else if (acceptToken(lp, "||"))
+    {
         lastOp = "||";
         return parseInputLine(lp);
-    }else if (acceptToken(lp, ";")){
+    }
+    else if (acceptToken(lp, ";"))
+    {
         lastOp = ";";
         return parseInputLine(lp);
     }
+
     return true;
 }
